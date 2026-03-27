@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Camera Receiver</title>
+    <style>
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        video { width: 100%; max-width: 1920px; background: #222; }
+        #controls { position: absolute; top: 20px; z-index: 10; text-align: center; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <div id="status">Connecting to signaling...</div>
+    <br>
+    <button id="startBtn">Click to Start Stream</button>
+</div>
+
+<video id="video" autoplay playsinline muted></video>
+
+<script>
+const status = document.getElementById('status');
+const video = document.getElementById('video');
+const startBtn = document.getElementById('startBtn');
+
+// WebRTC setup
+const peer = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+});
+
+// CRITICAL: WebRTC requires us to tell the browser to EXPECT video 
+// before the offer arrives, or the SDP negotiation will fail.
+peer.addTransceiver('video', { direction: 'recvonly' });
+
+startBtn.onclick = () => {
+    video.play();
+    startBtn.style.display = 'none';
+    status.innerText = "Waiting for Unity...";
+};
+
+const SERVER = 'ws://192.168.1.106:8080';
+const ws = new WebSocket(SERVER);
+
+ws.onopen = () => {
+    status.innerText = "Connected to Server. Ready.";
+    ws.send(JSON.stringify({ type: 'register', role: 'receiver' }));
+};
+
+peer.ontrack = (e) => {
+    console.log('[Receiver] Got track!', e.streams);
+    status.innerText = "Streaming Live";
+    video.srcObject = e.streams[0] || new MediaStream([e.track]);
+};
+
+peer.onicecandidate = (e) => {
+    if (e.candidate) {
+        ws.send(JSON.stringify({
+            type: 'candidate',
+            candidate: e.candidate.candidate,
+            sdpMid: e.candidate.sdpMid,
+            sdpMLineIndex: e.candidate.sdpMLineIndex
+        }));
+    }
+};
+
+ws.onmessage = async (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'offer') {
+        await peer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+    } else if (msg.type === 'candidate') {
+        try {
+            await peer.addIceCandidate(msg);
+        } catch (e) { console.error("Error adding candidate", e); }
+    }
+};
+</script>
+</body>
+</html>
