@@ -1,82 +1,422 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-    <title>Camera Receiver</title>
+    <title>4K HDRI Cubemap Receiver</title>
     <style>
-        body { margin: 0; background: #000; color: white; font-family: sans-serif; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
-        video { width: 100%; max-width: 1920px; background: #222; }
-        #controls { position: absolute; top: 20px; z-index: 10; text-align: center; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        body {
+            margin: 0;
+            background: #000;
+            color: white;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #controls {
+            position: absolute;
+            top: 20px;
+            z-index: 10;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 10px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        #status {
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
     </style>
 </head>
+
 <body>
 
-<div id="controls">
-    <div id="status">Connecting to signaling...</div>
-    <br>
-    <button id="startBtn">Click to Start Stream</button>
-</div>
+    <div id="controls">
+        <div id="status">Ready</div>
+        <div style="display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="pinInput" placeholder="Enter 4-digit PIN"
+                style="padding: 12px; font-size: 16px; border-radius: 5px; border: none; width: 150px; text-align: center;"
+                maxlength="4">
+            <button id="actionBtn">Connect</button>
+            <div
+                style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
+                <label>FOV: </label>
+                <input type="range" id="fovSlider" min="10" max="120" value="80">
+                <span id="fovValue">80</span>
+            </div>
+        </div>
+    </div>
 
-<video id="video" autoplay playsinline muted></video>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
-<script>
-const status = document.getElementById('status');
-const video = document.getElementById('video');
-const startBtn = document.getElementById('startBtn');
+    <script>
+        const status = document.getElementById('status');
+        const actionBtn = document.getElementById('actionBtn');
+        const pinInput = document.getElementById('pinInput');
+        const fovSlider = document.getElementById('fovSlider');
+        const fovValue = document.getElementById('fovValue');
 
-// WebRTC setup
-const peer = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-});
+        let scene, camera, renderer, controls;
+        let isConnected = false;
+        let vrSupported = false;
+        let ws;
 
-// CRITICAL: WebRTC requires us to tell the browser to EXPECT video 
-// before the offer arrives, or the SDP negotiation will fail.
-peer.addTransceiver('video', { direction: 'recvonly' });
+        function initScene() {
+            if (scene) return;
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 11000);
+            camera.position.set(0, 0, -1);
 
-startBtn.onclick = () => {
-    video.play();
-    startBtn.style.display = 'none';
-    status.innerText = "Waiting for Unity...";
-};
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
 
-const SERVER = 'ws://192.168.1.106:8080';
-const ws = new WebSocket(SERVER);
+            // Sphere for VR-compatible Zoom
+            const geometry = new THREE.SphereGeometry(1000, 64, 32);
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    tCube: { value: null },
+                    zoom: { value: 1.0 }
+                },
+                vertexShader: `
+                    varying vec3 vWorldDirection;
+                    void main() {
+                        vWorldDirection = (modelMatrix * vec4(position, 1.0)).xyz;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform samplerCube tCube;
+                    uniform float zoom;
+                    varying vec3 vWorldDirection;
+                    void main() {
+                        // Apply zoom by scaling the sampling vector
+                        vec3 sampleDir = normalize(vWorldDirection);
+                        sampleDir.xy *= (1.0 / zoom);
+                        sampleDir.x *= -1.0;
+                        sampleDir = normalize(sampleDir);
+                        gl_FragColor = textureCube(tCube, sampleDir);
+                    }
+                `,
+                side: THREE.BackSide
+            });
+            sphere = new THREE.Mesh(geometry, material);
+            scene.add(sphere);
 
-ws.onopen = () => {
-    status.innerText = "Connected to Server. Ready.";
-    ws.send(JSON.stringify({ type: 'register', role: 'receiver' }));
-};
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 0, 1);
+            controls.enableDamping = true;
+            controls.minDistance = 0.1;
+            controls.maxDistance = 4.0;
 
-peer.ontrack = (e) => {
-    console.log('[Receiver] Got track!', e.streams);
-    status.innerText = "Streaming Live";
-    video.srcObject = e.streams[0] || new MediaStream([e.track]);
-};
+            controls.addEventListener('change', () => {
+                fovSlider.value = 110;
+                /*
+                const distance = camera.position.distanceTo(controls.target);
+                const fov = 10 + 35 * distance; 
+                if (!renderer.xr.isPresenting) {
+                    camera.fov = fov;
+                    camera.updateProjectionMatrix();
+                }
+                fovSlider.value = fov;
+                fovValue.innerText = Math.round(fov);
+                */
+            });
 
-peer.onicecandidate = (e) => {
-    if (e.candidate) {
-        ws.send(JSON.stringify({
-            type: 'candidate',
-            candidate: e.candidate.candidate,
-            sdpMid: e.candidate.sdpMid,
-            sdpMLineIndex: e.candidate.sdpMLineIndex
-        }));
-    }
-};
+            fovSlider.oninput = () => {
+                const val = parseInt(fovSlider.value);
+                fovValue.innerText = val;
+                /*
+                if (!renderer.xr.isPresenting) {
+                    camera.fov = val;
+                    camera.updateProjectionMatrix();
+                }
+                */
+            };
 
-ws.onmessage = async (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.type === 'offer') {
-        await peer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
-    } else if (msg.type === 'candidate') {
-        try {
-            await peer.addIceCandidate(msg);
-        } catch (e) { console.error("Error adding candidate", e); }
-    }
-};
-</script>
+            window.addEventListener('resize', onWindowResize, false);
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        let lastTrackingTime = 0;
+        const TRACKING_INTERVAL = 33; // ~30Hz
+
+        function animate() {
+            renderer.setAnimationLoop(() => {
+                if (controls) controls.update();
+
+                // Update Zoom in Shader
+                if (sphere && sphere.material.uniforms) {
+                    sphere.material.uniforms.zoom.value = camera.fov / 62.0;
+                }
+
+                renderer.render(scene, camera);
+
+                // --- Universal Tracking (Desktop & VR) ---
+                const now = Date.now();
+                if (isConnected && ws && ws.readyState === WebSocket.OPEN && (now - lastTrackingTime > TRACKING_INTERVAL)) {
+                    let rot;
+                    if (renderer.xr.isPresenting) {
+                        // VR Mode: Use XR Headset pose
+                        const xrCamera = renderer.xr.getCamera(camera);
+                        rot = xrCamera.quaternion;
+                    } else {
+                        // Desktop Mode: Use OrbitControls / Camera pose
+                        rot = camera.quaternion;
+                    }
+
+                    // Map Three.js Rotation to Unity Rotation
+                    // Unity: LH, +Z Forward. Three.js: RH, -Z Forward.
+                    // To align them: flip X and Y, and invert Z rotation logic.
+                    ws.send(JSON.stringify({
+                        type: 'tracking',
+                        qx: rot.x, qy: -rot.y, qz: -rot.z, qw: rot.w
+                    }));
+                    lastTrackingTime = now;
+                }
+            });
+        }
+
+        let reusableCanvases = null;
+        let activeCubeTexture = null;
+        let pendingSequences = new Map(); // seqId -> { faces: [], count: 0 }
+
+        async function updateTextureFromFragments(faceIdx, seqId, jpgData) {
+            if (!pendingSequences.has(seqId)) {
+                pendingSequences.set(seqId, { faces: new Array(6), count: 0 });
+            }
+
+            const session = pendingSequences.get(seqId);
+            if (session.faces[faceIdx]) return; // Already have this face
+
+            session.faces[faceIdx] = jpgData;
+            session.count++;
+
+            // If we have all 6 faces, update the scene
+            if (session.count === 6) {
+                await renderFullSequence(session.faces);
+
+                // Cleanup current and older sequences (handle 0-255 wrap around)
+                pendingSequences.delete(seqId);
+                if (pendingSequences.size > 10) {
+                    // Safety: clear stale sequences if they pile up due to dropped packets
+                    const keys = Array.from(pendingSequences.keys());
+                    keys.forEach(k => {
+                        if (Math.abs(k - seqId) > 20) pendingSequences.delete(k);
+                    });
+                }
+            }
+        }
+
+        async function renderFullSequence(faceBuffers) {
+            const faceSize = 2048; // Standardized for 4K
+
+            // Ensure system is initialized
+            if (!reusableCanvases) {
+                reusableCanvases = [];
+                for (let i = 0; i < 6; i++) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = faceSize; canvas.height = faceSize;
+                    reusableCanvases.push(canvas);
+                }
+                activeCubeTexture = new THREE.CubeTexture(reusableCanvases);
+                activeCubeTexture.encoding = THREE.sRGBEncoding;
+                if (sphere) sphere.material.uniforms.tCube.value = activeCubeTexture;
+                scene.environment = activeCubeTexture;
+            }
+
+            // Load all 6 images in parallel
+            const promises = faceBuffers.map((data, i) => {
+                return new Promise((resolve) => {
+                    const blob = new Blob([data], { type: 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = reusableCanvases[i];
+                        const ctx = canvas.getContext('2d');
+
+                        ctx.save();
+                        ctx.translate(0, canvas.height);
+                        ctx.scale(1, -1);
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        ctx.restore();
+
+                        URL.revokeObjectURL(url);
+                        resolve();
+                    };
+                    img.src = url;
+                });
+            });
+
+            await Promise.all(promises);
+            activeCubeTexture.needsUpdate = true;
+            status.innerText = "Live 4K Optimized Feed Active";
+        }
+
+        // Keep for backward compatibility if needed, though we primarily use fragments now
+        function updateTextureFromBlob(blob) {
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                const faceSize = img.height;
+
+                // Initialize highly optimized reusable canvases and texture if not created
+                if (!reusableCanvases) {
+                    reusableCanvases = [];
+                    for (let i = 0; i < 6; i++) {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = faceSize; canvas.height = faceSize;
+                        reusableCanvases.push(canvas);
+                    }
+                    activeCubeTexture = new THREE.CubeTexture(reusableCanvases);
+                    activeCubeTexture.encoding = THREE.sRGBEncoding;
+
+                    if (sphere) {
+                        sphere.material.uniforms.tCube.value = activeCubeTexture;
+                    }
+                    scene.environment = activeCubeTexture;
+                }
+
+                for (let i = 0; i < 6; i++) {
+                    const canvas = reusableCanvases[i];
+                    if (canvas.width !== faceSize) {
+                        canvas.width = faceSize; canvas.height = faceSize;
+                    }
+                    const ctx = canvas.getContext('2d');
+
+                    ctx.save();
+                    ctx.clearRect(0, 0, faceSize, faceSize);
+
+                    // Vertical Flip Fix for Unity -> Three.js
+                    ctx.translate(0, faceSize);
+                    ctx.scale(1, -1);
+                    ctx.drawImage(img, i * faceSize, 0, faceSize, faceSize, 0, 0, faceSize, faceSize);
+                    ctx.restore();
+                }
+
+                // ThreeJS will optimize WebGL texture uploads when needsUpdate is true
+                activeCubeTexture.needsUpdate = true;
+
+                URL.revokeObjectURL(url);
+                status.innerText = "Live 4K Cubemap Active";
+            };
+            img.src = url;
+        }
+
+        async function checkVRSupport() {
+            if ('xr' in navigator) {
+                try {
+                    vrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+                } catch (e) { console.error("XR check error", e); }
+            }
+        }
+
+        function connectSignaling(pin) {
+            const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            const host = window.location.host;
+            ws = new WebSocket(`${protocol}://${host}`);
+            ws.binaryType = 'blob';
+
+            ws.onopen = () => {
+                isConnected = true;
+                status.innerText = "Connected! Waiting for 4K Unity Feed...";
+                ws.send(JSON.stringify({ type: 'register', role: 'receiver', pin: pin }));
+                ws.send(JSON.stringify({ type: 'request_360', enabled: true }));
+                if (vrSupported) {
+                    actionBtn.innerText = "Enter VR Mode";
+                    actionBtn.style.background = "#28a745";
+                }
+                pinInput.style.display = 'none';
+            };
+
+            ws.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    const buffer = await event.data.arrayBuffer();
+                    const view = new Uint8Array(buffer);
+                    if (view.length > 2) {
+                        const faceIdx = view[0];
+                        const seqId = view[1];
+                        const jpgData = buffer.slice(2);
+                        updateTextureFromFragments(faceIdx, seqId, jpgData);
+                    } else {
+                        // Regular blob without header
+                        updateTextureFromBlob(event.data);
+                    }
+                } else {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'error') {
+                            alert(msg.message);
+                            ws.close();
+                        } else if (msg.type === 'peer_disconnected' && msg.role === 'sender') {
+                            status.innerText = "Sender disconnected. Waiting...";
+                        }
+                    } catch (e) { }
+                }
+            };
+
+            ws.onclose = () => {
+                isConnected = false;
+                status.innerText = "Disconnected.";
+                actionBtn.innerText = "Connect";
+                actionBtn.style.background = "#007bff";
+                pinInput.style.display = 'inline-block';
+            };
+        }
+
+        actionBtn.onclick = async () => {
+            if (!isConnected) {
+                const pin = pinInput.value.trim();
+                if (!pin || pin.length !== 4) {
+                    alert("Please enter a valid 4-digit PIN.");
+                    return;
+                }
+                initScene();
+                connectSignaling(pin);
+            } else if (vrSupported) {
+                try {
+                    const session = await navigator.xr.requestSession('immersive-vr', {
+                        optionalFeatures: ['local-floor', 'bounded-floor']
+                    });
+                    renderer.xr.setSession(session);
+                    actionBtn.style.display = 'none';
+                    status.innerText = "VR Session Active";
+                } catch (e) { alert("VR failed: " + e.message); }
+            }
+        };
+
+        checkVRSupport();
+    </script>
 </body>
+
 </html>
