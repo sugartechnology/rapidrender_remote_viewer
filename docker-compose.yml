@@ -1,0 +1,7 @@
+services:
+  rapid-render-remote-viewer:
+    build: .
+    container_name: rapid-render-remote-viewer
+    ports:
+      - "7992:3000"
+    restart: unless-stopped

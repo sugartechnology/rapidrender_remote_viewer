@@ -1,5 +1,5 @@
 const WebSocket = require('ws');
-const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -35,10 +35,7 @@ const QUEST2_CONFIG = {
 };
 
 // ─── Unified Server (HTTP + WebSocket) on port 3000 ────────────────────────
-const httpServer = https.createServer({
-    key: fs.readFileSync('localhost+2-key.pem'),
-    cert: fs.readFileSync('localhost+2.pem')
-}, (req, res) => {
+const httpServer = http.createServer((req, res) => {
     const filePath = path.join(__dirname, 'test.html');
     fs.readFile(filePath, (err, data) => {
         if (err) {
