@@ -416,6 +416,22 @@
         };
 
         checkVRSupport();
+
+        // --- Auto-Connect from URL PIN ---
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const pin = urlParams.get('pin');
+            if (pin && pin.length === 4) {
+                console.log(`[Auto-Connect] PIN ${pin} detected from URL.`);
+                pinInput.value = pin;
+                // Delay slightly to ensure everything is ready
+                setTimeout(() => {
+                    if (!isConnected) {
+                        actionBtn.click();
+                    }
+                }, 100);
+            }
+        });
     </script>
 </body>
 
