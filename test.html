@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <meta charset="UTF-8">
     <title>4K HDRI Cubemap Receiver</title>
     <style>
         body {
@@ -59,14 +60,9 @@
                 maxlength="4">
             <button id="actionBtn">Connect</button>
             <div style="display: flex; gap: 5px;">
-                <button onclick="sendMove('forward')" title="Move Forward (W)">↑</button>
-                <button onclick="sendMove('back')" title="Move Back (S)">↓</button>
+                <button onclick="sendMove('forward')" title="Move Forward (W)">&uarr;</button>
+                <button onclick="sendMove('back')" title="Move Back (S)">&darr;</button>
             </div>
-            <div
-                style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
-                <label>FOV: </label>
-                <input type="range" id="fovSlider" min="10" max="120" value="80">
-                <span id="fovValue">80</span>
             </div>
         </div>
     </div>
@@ -78,8 +74,6 @@
         const status = document.getElementById('status');
         const actionBtn = document.getElementById('actionBtn');
         const pinInput = document.getElementById('pinInput');
-        const fovSlider = document.getElementById('fovSlider');
-        const fovValue = document.getElementById('fovValue');
 
         let scene, camera, renderer, controls;
         let isConnected = false;
@@ -136,31 +130,6 @@
             controls.enableDamping = true;
             controls.minDistance = 0.1;
             controls.maxDistance = 4.0;
-
-            controls.addEventListener('change', () => {
-                fovSlider.value = 110;
-                /*
-                const distance = camera.position.distanceTo(controls.target);
-                const fov = 10 + 35 * distance; 
-                if (!renderer.xr.isPresenting) {
-                    camera.fov = fov;
-                    camera.updateProjectionMatrix();
-                }
-                fovSlider.value = fov;
-                fovValue.innerText = Math.round(fov);
-                */
-            });
-
-            fovSlider.oninput = () => {
-                const val = parseInt(fovSlider.value);
-                fovValue.innerText = val;
-                /*
-                if (!renderer.xr.isPresenting) {
-                    camera.fov = val;
-                    camera.updateProjectionMatrix();
-                }
-                */
-            };
 
             window.addEventListener('resize', onWindowResize, false);
             animate();
@@ -359,6 +328,9 @@
                 if (vrSupported) {
                     actionBtn.innerText = "Enter VR Mode";
                     actionBtn.style.background = "#28a745";
+                } else {
+                    actionBtn.disabled = true;
+                    actionBtn.style.opacity = "0.5";
                 }
                 pinInput.style.display = 'none';
             };
@@ -394,6 +366,8 @@
                 status.innerText = "Disconnected.";
                 actionBtn.innerText = "Connect";
                 actionBtn.style.background = "#007bff";
+                actionBtn.disabled = false;
+                actionBtn.style.opacity = "1";
                 pinInput.style.display = 'inline-block';
             };
         }
@@ -431,6 +405,12 @@
                     actionBtn.style.display = 'none';
                     status.innerText = "VR Session Active";
                 } catch (e) { alert("VR failed: " + e.message); }
+            }
+        };
+
+        pinInput.onkeydown = (e) => {
+            if (e.key === "Enter") {
+                actionBtn.click();
             }
         };
 
