@@ -80,7 +80,7 @@ wss.on('connection', (ws, req) => {
         if (isJson && msg) {
             if (msg.type === 'register') {
                 ws.role = msg.role;
-                
+
                 if (ws.role === 'sender') {
                     const pin = generatePin();
                     ws.pin = pin;
@@ -99,6 +99,7 @@ wss.on('connection', (ws, req) => {
                         ws.send(JSON.stringify({ type: 'session_ready', clientId: ws.id }));
                     } else {
                         ws.send(JSON.stringify({ type: 'error', message: 'Invalid PIN' }));
+                        console.log(`[Signaling] Invalid PIN tried to connect: ${pin}`);
                     }
                 }
                 return;
@@ -148,7 +149,7 @@ wss.on('connection', (ws, req) => {
         if (ws.pin && sessions[ws.pin]) {
             console.log(`[Signaling] ${ws.role} disconnected from PIN ${ws.pin}`);
             const session = sessions[ws.pin];
-            
+
             if (ws.role === 'sender') {
                 for (const receiver of session.receivers) {
                     if (receiver.readyState === WebSocket.OPEN) {
