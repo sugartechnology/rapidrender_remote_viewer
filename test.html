@@ -46,6 +46,26 @@
         #status {
             margin-bottom: 10px;
             font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        #spinner {
+            visibility: hidden;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #007bff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
         }
     </style>
 </head>
@@ -53,7 +73,10 @@
 <body>
 
     <div id="controls">
-        <div id="status">Ready</div>
+        <div id="status">
+            <div id="spinner"></div>
+            <span id="statusMsg">Ready</span>
+        </div>
         <div style="display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap;">
             <input type="text" id="pinInput" placeholder="Enter 4-digit PIN"
                 style="padding: 12px; font-size: 16px; border-radius: 5px; border: none; width: 150px; text-align: center;"
@@ -63,19 +86,21 @@
                 <button onclick="sendMove('forward')" title="Move Forward (W)">&uarr;</button>
                 <button onclick="sendMove('back')" title="Move Back (S)">&darr;</button>
             </div>
-            </div>
         </div>
+    </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
     <script>
-        const status = document.getElementById('status');
+        const statusMsg = document.getElementById('statusMsg');
+        const spinner = document.getElementById('spinner');
         const actionBtn = document.getElementById('actionBtn');
         const pinInput = document.getElementById('pinInput');
 
         let scene, camera, renderer, controls;
+        let vrLoadingSpinner = null;
         let isConnected = false;
         let vrSupported = false;
         let ws;
@@ -131,6 +156,8 @@
             controls.minDistance = 0.1;
             controls.maxDistance = 4.0;
 
+            initVRSpinner();
+
             window.addEventListener('resize', onWindowResize, false);
             animate();
         }
@@ -147,6 +174,16 @@
         function animate() {
             renderer.setAnimationLoop(() => {
                 if (controls) controls.update();
+
+                // Rotate VR Spinner
+                if (vrLoadingSpinner && vrLoadingSpinner.visible) {
+                    vrLoadingSpinner.material.rotation -= 0.05; // Negative for clockwise
+                }
+
+                // Poll VR Inputs (Gamepad + Hands)
+                if (renderer.xr.isPresenting) {
+                    handleVRInputs();
+                }
 
                 // Update Zoom in Shader
                 if (sphere && sphere.material.uniforms) {
@@ -191,6 +228,8 @@
 
             const session = pendingSequences.get(seqId);
             if (session.faces[faceIdx]) return; // Already have this face
+
+            if (session.count === 0) setLoading(true);
 
             session.faces[faceIdx] = jpgData;
             session.count++;
@@ -253,7 +292,8 @@
 
             await Promise.all(promises);
             activeCubeTexture.needsUpdate = true;
-            status.innerText = "Live 4K Optimized Feed Active";
+            statusMsg.innerText = "Live 4K Optimized Feed Active";
+            setLoading(false);
         }
 
         // Keep for backward compatibility if needed, though we primarily use fragments now
@@ -322,7 +362,7 @@
 
             ws.onopen = () => {
                 isConnected = true;
-                status.innerText = "Connected! Waiting for 4K Unity Feed...";
+                statusMsg.innerText = "Connected! Waiting for 4K Unity Feed...";
                 ws.send(JSON.stringify({ type: 'register', role: 'receiver', pin: pin }));
                 ws.send(JSON.stringify({ type: 'request_360', enabled: true }));
                 if (vrSupported) {
@@ -355,7 +395,7 @@
                             alert(msg.message);
                             ws.close();
                         } else if (msg.type === 'peer_disconnected' && msg.role === 'sender') {
-                            status.innerText = "Sender disconnected. Waiting...";
+                            statusMsg.innerText = "Sender disconnected. Waiting...";
                         }
                     } catch (e) { }
                 }
@@ -363,13 +403,97 @@
 
             ws.onclose = () => {
                 isConnected = false;
-                status.innerText = "Disconnected.";
+                statusMsg.innerText = "Disconnected.";
                 actionBtn.innerText = "Connect";
                 actionBtn.style.background = "#007bff";
                 actionBtn.disabled = false;
                 actionBtn.style.opacity = "1";
                 pinInput.style.display = 'inline-block';
             };
+        }
+
+        function setLoading(active) {
+            spinner.style.visibility = active ? 'visible' : 'hidden';
+            if (vrLoadingSpinner) {
+                // Only show 3D spinner if we are currently in VR mode
+                vrLoadingSpinner.visible = active && renderer.xr.isPresenting;
+            }
+        }
+
+        function initVRSpinner() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            ctx.strokeStyle = '#007bff';
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.arc(64, 64, 50, 0, Math.PI * 1.5);
+            ctx.stroke();
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            vrLoadingSpinner = new THREE.Sprite(material);
+            vrLoadingSpinner.scale.set(0.15, 0.15, 1);
+            vrLoadingSpinner.position.set(0, 0, -1.2); // 1.2m in front
+            vrLoadingSpinner.visible = false;
+
+            // Attach to camera so it follows head
+            camera.add(vrLoadingSpinner);
+            scene.add(camera); // Ensure camera is in scene to host the spinner
+        }
+
+        let lastVRMoveTime = 0;
+        const VR_MOVE_COOLDOWN = 300;
+
+        function handleVRInputs() {
+            const session = renderer.xr.getSession();
+            if (!session) return;
+
+            const now = Date.now();
+            if (now - lastVRMoveTime < VR_MOVE_COOLDOWN) return;
+
+            for (const source of session.inputSources) {
+                // 1. Controller Buttons (Qualcomm/Oculus Touch)
+                if (source.gamepad) {
+                    const buttons = source.gamepad.buttons;
+                    const handedness = source.handedness;
+
+                    if (handedness === 'left') {
+                        // X Button (Bottom) is usually index 4
+                        if (buttons[4] && buttons[4].pressed) {
+                            sendMove('forward');
+                            lastVRMoveTime = now;
+                        }
+                        // Y Button (Top) is usually index 5
+                        if (buttons[5] && buttons[5].pressed) {
+                            sendMove('back');
+                            lastVRMoveTime = now;
+                        }
+                    }
+                }
+
+                // 2. Hand Tracking (Pinch Detection)
+                if (source.hand) {
+                    const handedness = source.handedness;
+                    // Detect Pinch: Index + Thumb Tips
+                    const thumbTip = source.hand.get(XRHand.THUMB_PHALANX_TIP);
+                    const indexTip = source.hand.get(XRHand.INDEX_PHALANX_TIP);
+
+                    if (thumbTip && indexTip) {
+                        const dist = Math.sqrt(
+                            Math.pow(thumbTip.x - indexTip.x, 2) +
+                            Math.pow(thumbTip.y - indexTip.y, 2) +
+                            Math.pow(thumbTip.z - indexTip.z, 2)
+                        );
+
+                        if (dist < 0.02) { // < 2cm = Pinch
+                            if (handedness === 'right') sendMove('forward');
+                            else if (handedness === 'left') sendMove('back');
+                            lastVRMoveTime = now;
+                        }
+                    }
+                }
+            }
         }
 
         function sendMove(dir) {
@@ -394,6 +518,7 @@
                     alert("Please enter a valid 4-digit PIN.");
                     return;
                 }
+                statusMsg.innerText = "Connecting...";
                 initScene();
                 connectSignaling(pin);
             } else if (vrSupported) {
