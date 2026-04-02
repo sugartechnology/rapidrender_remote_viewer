@@ -456,19 +456,17 @@
                 // 1. Controller Buttons (Qualcomm/Oculus Touch)
                 if (source.gamepad) {
                     const buttons = source.gamepad.buttons;
-                    const handedness = source.handedness;
 
-                    if (handedness === 'left') {
-                        // X Button (Bottom) is usually index 4
-                        if (buttons[4] && buttons[4].pressed) {
-                            sendMove('forward');
-                            lastVRMoveTime = now;
-                        }
-                        // Y Button (Top) is usually index 5
-                        if (buttons[5] && buttons[5].pressed) {
-                            sendMove('back');
-                            lastVRMoveTime = now;
-                        }
+                    // Top buttons (B on Right, Y on Left) are usually index 5
+                    if (buttons[5] && buttons[5].pressed) {
+                        sendMove('forward');
+                        lastVRMoveTime = now;
+                    }
+
+                    // Bottom buttons (A on Right, X on Left) are usually index 4
+                    if (buttons[4] && buttons[4].pressed) {
+                        sendMove('back');
+                        lastVRMoveTime = now;
                     }
                 }
 
