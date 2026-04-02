@@ -58,6 +58,10 @@
                 style="padding: 12px; font-size: 16px; border-radius: 5px; border: none; width: 150px; text-align: center;"
                 maxlength="4">
             <button id="actionBtn">Connect</button>
+            <div style="display: flex; gap: 5px;">
+                <button onclick="sendMove('forward')" title="Move Forward (W)">↑</button>
+                <button onclick="sendMove('back')" title="Move Back (S)">↓</button>
+            </div>
             <div
                 style="background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
                 <label>FOV: </label>
@@ -393,6 +397,21 @@
                 pinInput.style.display = 'inline-block';
             };
         }
+
+        function sendMove(dir) {
+            if (isConnected && ws && ws.readyState === WebSocket.OPEN) {
+                console.log(`[Input] Sending move: ${dir}`);
+                ws.send(JSON.stringify({ type: 'input', move: dir }));
+            }
+        }
+
+        // --- Keyboard Controls ---
+        window.addEventListener('keydown', (e) => {
+            if (!isConnected) return;
+            const key = e.key.toLowerCase();
+            if (key === 'w' || key === 'arrowup') sendMove('forward');
+            if (key === 's' || key === 'arrowdown') sendMove('back');
+        });
 
         actionBtn.onclick = async () => {
             if (!isConnected) {
